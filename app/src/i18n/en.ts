@@ -360,6 +360,8 @@ export const en = {
   "settings.rebuildSwitches.desc": "Turns jump tables back into switch blocks.",
   "settings.hiddenCode": "Look for code no one calls",
   "settings.hiddenCode.desc": "Finds more functions in stripped apps. The slowest option.",
+  "settings.objcCalls": "Follow Objective-C messages",
+  "settings.objcCalls.desc": "Shows which method each objc_msgSend call reaches. Can make a large Mac app take many times longer to open.",
   "settings.swiftNames": "Demangle Swift names",
   "settings.swiftNames.desc": "Readable Swift function names. Turn off if a big Swift app takes too long to open.",
   "settings.rea.desc": "Comes with Eleven. Gives agents the tools to read apps.",

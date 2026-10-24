@@ -1,4 +1,5 @@
 import { closeSync, openSync, readSync } from "node:fs";
+import { type FileHandle, open } from "node:fs/promises";
 
 /** What a file's header says it is: the format, and each architecture inside with where its bytes sit. */
 export type BinaryInfo = {
@@ -80,5 +81,49 @@ export function binaryInfoOf(path: string, fileSize: number): BinaryInfo {
     return readBinaryInfo(head.subarray(0, readSync(fd, head, 0, HEAD_BYTES, 0)), fileSize);
   } finally {
     closeSync(fd);
+  }
+}
+
+const MH_MAGIC_64 = 0xfeedfacf;
+const LC_SYMTAB = 0x2;
+const LC_SEGMENT_64 = 0x19;
+const SECTION_BYTES = 80;
+
+async function readAt(file: FileHandle, at: number, length: number): Promise<Buffer> {
+  const bytes = Buffer.alloc(length);
+  const { bytesRead } = await file.read(bytes, 0, length, at);
+  return bytes.subarray(0, bytesRead);
+}
+
+/** Whether Ghidra runs its Objective-C Message Analyzer on this file: the same test Ghidra 12 makes, read from the header. */
+export async function hasObjcMessages(path: string): Promise<boolean> {
+  const file = await open(path, "r");
+  try {
+    const size = (await file.stat()).size;
+    const slice = readBinaryInfo(await readAt(file, 0, HEAD_BYTES), size).slices[0];
+    if (!slice) return false;
+    const header = await readAt(file, slice.offset, 32);
+    if (header.length < 32 || header.readUInt32LE(0) !== MH_MAGIC_64) return false;
+    const commands = await readAt(file, slice.offset + 32, header.readUInt32LE(20));
+    const sections: string[] = [];
+    let strings: { readonly at: number; readonly size: number } | null = null;
+    for (let at = 0, ix = 0; ix < header.readUInt32LE(16) && at + 8 <= commands.length; ix++) {
+      const cmd = commands.readUInt32LE(at);
+      if (cmd === LC_SEGMENT_64 && at + 72 <= commands.length) {
+        for (let s = 0; s < commands.readUInt32LE(at + 64); s++) {
+          const name = at + 72 + s * SECTION_BYTES;
+          if (name + 16 <= commands.length) sections.push(commands.toString("latin1", name, name + 16).replace(/\0.*$/s, ""));
+        }
+      }
+      if (cmd === LC_SYMTAB && at + 24 <= commands.length) strings = { at: commands.readUInt32LE(at + 16), size: commands.readUInt32LE(at + 20) };
+      at += commands.readUInt32LE(at + 4) || commands.length;
+    }
+    if (!sections.some((name) => name.startsWith("__objc_"))) return false;
+    if (sections.includes("__objc_stubs")) return true;
+    return strings !== null && (await readAt(file, slice.offset + strings.at, strings.size)).includes("\0_objc_msgSend");
+  } catch {
+    return false;
+  } finally {
+    await file.close();
   }
 }

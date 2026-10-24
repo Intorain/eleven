@@ -110,6 +110,7 @@ export type Settings = {
   readonly findParameters: boolean;
   readonly rebuildSwitches: boolean;
   readonly hiddenCode: boolean;
+  readonly objcCalls: boolean;
   readonly swiftNames: boolean;
   readonly firstView: "Pseudocode" | "Assembly" | "Graph" | "Hex";
   readonly universalApps: "Ask each time" | "Open the one for this Mac";
@@ -199,6 +200,7 @@ export const DEFAULT_SETTINGS: Settings = {
   findParameters: false,
   rebuildSwitches: false,
   hiddenCode: false,
+  objcCalls: false,
   swiftNames: true,
   firstView: "Pseudocode",
   universalApps: "Ask each time",
@@ -308,6 +310,7 @@ const SETTINGS: z.ZodType<Settings> = z.object({
   findParameters: z.boolean().catch(D.findParameters),
   rebuildSwitches: z.boolean().catch(D.rebuildSwitches),
   hiddenCode: z.boolean().catch(D.hiddenCode),
+  objcCalls: z.boolean().catch(D.objcCalls),
   swiftNames: z.boolean().catch(D.swiftNames),
   firstView: z.enum(["Pseudocode", "Assembly", "Graph", "Hex"]).catch(D.firstView),
   universalApps: z.enum(["Ask each time", "Open the one for this Mac"]).catch(D.universalApps),

@@ -325,6 +325,8 @@
   "settings.rebuildSwitches.desc": "把跳转表还原成 switch 块。",
   "settings.hiddenCode": "查找无人调用的代码",
   "settings.hiddenCode.desc": "在去符号的应用里找到更多函数。也是最慢的选项。",
+  "settings.objcCalls": "跟踪 Objective-C 消息",
+  "settings.objcCalls.desc": "显示每个 objc_msgSend 调用到达的方法。大型 Mac 应用打开可能慢很多倍。",
   "settings.swiftNames": "还原 Swift 符号名",
   "settings.swiftNames.desc": "让 Swift 函数名可读。如果大型 Swift 应用打开太慢，可以关闭。",
   "settings.rea.desc": "随 Eleven 附带。为智能体提供读取应用的工具。",

@@ -10,6 +10,7 @@ import { tie } from "../lib/reaper";
 import { SerialQueue } from "../lib/serial";
 import { cacheDir } from "../settings/actions";
 import { currentSettings, pathSetting, type Settings } from "../settings/store";
+import { hasObjcMessages } from "./binaryInfo";
 import { nodeCommand } from "./toolchain";
 import { activeProvider } from "../analysis/engines";
 import type { CodeType } from "./codeTypes";
@@ -85,17 +86,21 @@ function reportStep(message: string | undefined): void {
   if (step) for (const listener of stepListeners) listener(step);
 }
 
-function plainEnv(): Record<string, string> {
-  return { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), ...reaEnv() };
+function plainEnv(objc: boolean): Record<string, string> {
+  return { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined)), ...reaEnv(currentSettings(), objc) };
 }
 
 const MAXMEM: Readonly<Record<Settings["ghidraMemory"], string | null>> = { Automatic: null, "2 GB": "2G", "4 GB": "4G", "8 GB": "8G", "16 GB": "16G", "32 GB": "32G", "64 GB": "64G" };
 
-/** Ghidra knobs from Settings → Analysis, as the environment REA reads when it starts Ghidra. */
-export function reaEnv(s: Settings = currentSettings()): Record<string, string> {
+/** Ghidra only has this analyzer for Objective-C Mach-O files, and naming one a file lacks stops the open. */
+const OBJC_MESSAGES = "Objective-C Message Analyzer";
+const OBJC_REFUSED = `Unknown Ghidra analyzer for this program: ${OBJC_MESSAGES}`;
+
+/** Ghidra knobs from Settings → Analysis, as the environment REA reads when it starts Ghidra. `objc` says the file has Objective-C messages. */
+export function reaEnv(s: Settings = currentSettings(), objc = false): Record<string, string> {
   const memory = MAXMEM[s.ghidraMemory];
   const inherited = (process.env.REA_GHIDRA_DISABLED_ANALYZERS ?? "").split(",").map((name) => name.trim()).filter(Boolean);
-  const disabled = [...new Set([...inherited, ...(s.rebuildSwitches ? [] : ["Decompiler Switch Analysis"]), ...(s.swiftNames ? [] : ["Demangler Swift"])])];
+  const disabled = [...new Set([...inherited, ...(s.rebuildSwitches ? [] : ["Decompiler Switch Analysis"]), ...(s.swiftNames ? [] : ["Demangler Swift"]), ...(objc && !s.objcCalls ? [OBJC_MESSAGES] : [])])];
   return {
     REA_GHIDRA_STARTUP_TIMEOUT_MS: String(ghidraStartupMs(s)),
     ...(memory ? { GHIDRA_MAXMEM: memory } : {}),
@@ -103,9 +108,9 @@ export function reaEnv(s: Settings = currentSettings()): Record<string, string> 
   };
 }
 
-export function reaTransport(): StdioClientTransport {
+export function reaTransport(objc = false): StdioClientTransport {
   const { command, args } = reaLaunch();
-  return new StdioClientTransport({ command, args: [...args], env: plainEnv(), stderr: "ignore" });
+  return new StdioClientTransport({ command, args: [...args], env: plainEnv(objc), stderr: "ignore" });
 }
 
 /** REA's code, the step that failed and the engine's own diagnostics, so a failure says more than its summary. */
@@ -148,24 +153,35 @@ type Session = { readonly path: string; readonly provider: string; readonly open
 
 class Rea {
   private client: Client | null = null;
+  /** Whether the next REA should skip Ghidra's Objective-C analyzer, and whether the running one does: REA reads it only at start. */
+  private objc = false;
+  private clientObjc = false;
   /** Shared by every caller, so concurrent requests on one file import it once instead of once each. */
   private session: Session | null = null;
   private readonly queue = new SerialQueue();
   private readonly replays = new Map<string, () => readonly (readonly [string, CodeType])[]>();
 
   private async connect(): Promise<Client> {
-    if (this.client) return this.client;
+    if (this.client && this.clientObjc === this.objc) return this.client;
+    if (this.client) {
+      const old = this.client;
+      this.client = null;
+      await old.close();
+    }
+    const objc = this.objc;
     const client = new Client({ name: "eleven", version: "0.1.0" });
-    const transport = reaTransport();
+    const transport = reaTransport(objc);
     await client.connect(transport);
     const untie = tie(transport.pid ?? undefined);
     process.once("exit", () => void transport.close());
     client.onclose = () => {
       untie();
-      if (this.client === client) this.client = null;
+      if (this.client !== client) return;
+      this.client = null;
       this.session = null;
     };
     this.client = client;
+    this.clientObjc = objc;
     return client;
   }
 
@@ -195,7 +211,20 @@ class Rea {
   }
 
   private async openBinary(path: string, provider: string): Promise<Opened> {
+    this.objc = provider === "ghidra" && !currentSettings().objcCalls && (await hasObjcMessages(path));
+    try {
+      return await this.openAndReplay(path, provider);
+    } catch (err) {
+      if (!this.objc || !errorMessage(err).includes(OBJC_REFUSED)) throw err;
+      this.objc = false;
+      return this.openAndReplay(path, provider);
+    }
+  }
+
+  /** The first query is where Ghidra's import fails, so it runs here, where a refused analyzer can still be retried. */
+  private async openAndReplay(path: string, provider: string): Promise<Opened> {
     const opened = parseOpened(path, await this.call("open_binary", { path, provider_id: provider }));
+    await this.call("list_segments", {});
     for (const [address, type] of this.replays.get(path)?.() ?? []) {
       await this.call("set_code_type", { address, type }).catch(() => undefined);
     }

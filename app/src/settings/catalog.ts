@@ -423,6 +423,7 @@ export function buildPages(c: Ctx): Readonly<Record<Page, readonly GroupModel[]>
         tg("findParameters", t("settings.findParameters"), t("settings.findParameters.desc")),
         tg("rebuildSwitches", t("settings.rebuildSwitches"), t("settings.rebuildSwitches.desc")),
         tg("hiddenCode", t("settings.hiddenCode"), t("settings.hiddenCode.desc")),
+        tg("objcCalls", t("settings.objcCalls"), t("settings.objcCalls.desc")),
         tg("swiftNames", t("settings.swiftNames"), t("settings.swiftNames.desc")),
         path("javaHome", "Java", c.info.java.path ?? t("settings.notFound"), true, { status: c.info.java.version ? { text: `Java ${c.info.java.version}`, tone: "good" } : { text: t("settings.notFound"), tone: "warn" } }),
       ] },
