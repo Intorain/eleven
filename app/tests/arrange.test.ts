@@ -23,7 +23,7 @@ const FUNCTIONS: readonly Fn[] = [
 
 test("paths in the binary place files exactly, and code between two functions of one file joins it", () => {
   const sources = sourceFiles(STRINGS.map((row) => row.b), []);
-  const result = arrangeFromEvidence(FUNCTIONS, STRINGS, [], sources);
+  const result = arrangeFromEvidence(FUNCTIONS, [], sources);
   expect(result.files.map((file) => `${file.path} ${file.placement} ${[...file.fns].sort().join(",")}`)).toEqual([
     "Calculator/Engine/Evaluator.swift exact 0x10,0x20,0x30",
     "Calculator/History/HistoryStore.swift exact 0x40",

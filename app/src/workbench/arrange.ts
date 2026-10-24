@@ -6,7 +6,7 @@ import type { SwiftType } from "../engine/swiftTypes";
 import { errorMessage, isRecord, stringField } from "../lib/guards";
 import { cacheRoot } from "../lib/platform";
 import { t } from "../i18n";
-import type { Fn, TableRow } from "./model";
+import type { Fn } from "./model";
 import { originOf } from "./sidebar/model";
 import { type SourceFiles, stemOf, traceStatic } from "./sources";
 
@@ -111,7 +111,8 @@ const MIN_FILES_TO_SORT = 8;
 const MAX_LISTED_FILES = 80;
 
 function sortedByAddress(fns: readonly Fn[]): readonly Fn[] {
-  return [...fns].sort((a, b) => (BigInt(a.addr) < BigInt(b.addr) ? -1 : BigInt(a.addr) > BigInt(b.addr) ? 1 : 0));
+  const keyed = fns.map((fn) => ({ fn, at: BigInt(fn.addr) }));
+  return keyed.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)).map((entry) => entry.fn);
 }
 
 /** The folder the binary's paths share, dropped so the tree starts at the project, not at the build machine's home. */
@@ -128,18 +129,18 @@ function relative(path: string, prefix: string): string {
 }
 
 /** Step one and two: files from paths and types, then each run of unplaced functions between two functions of one file joins it. */
-export function arrangeFromEvidence(functions: readonly Fn[], strings: readonly TableRow[], types: readonly SwiftType[], sources: SourceFiles): Arrangement {
+export function arrangeFromEvidence(functions: readonly Fn[], types: readonly SwiftType[], sources: SourceFiles): Arrangement {
   const yours = functions.filter((fn) => originOf(fn, fn.name) === "yours");
   const owner = new Map<string, string>();
   const files = new Map<string, { key: string; path: string; placement: Placement; reason: readonly Why[] }>();
   const prefix = commonPrefix(sources.paths);
   for (const path of sources.paths) {
-    const trace = traceStatic(path, false, types, yours, strings);
+    const trace = traceStatic(path, false, types, yours, []);
     files.set(path, { key: path, path: relative(path, prefix), placement: "exact", reason: [{ kind: "path", path }] });
     for (const fn of trace.fns) if (!owner.has(fn.addr)) owner.set(fn.addr, path);
   }
   for (const guess of sources.guessed) {
-    const trace = traceStatic(guess.file, true, types, yours, strings);
+    const trace = traceStatic(guess.file, true, types, yours, []);
     if (trace.fns.length === 0) continue;
     files.set(guess.file, { key: guess.file, path: guess.file, placement: "neighbour", reason: [{ kind: "type", type: guess.type }] });
     for (const fn of trace.fns) if (!owner.has(fn.addr)) owner.set(fn.addr, guess.file);
@@ -153,7 +154,11 @@ export function arrangeFromEvidence(functions: readonly Fn[], strings: readonly 
   }
   placeGuessedFolders(files, order, owner);
   const byFile = new Map<string, string[]>();
-  for (const [addr, file] of owner) byFile.set(file, [...(byFile.get(file) ?? []), addr]);
+  for (const [addr, file] of owner) {
+    const fns = byFile.get(file);
+    if (fns) fns.push(addr);
+    else byFile.set(file, [addr]);
+  }
   const arranged = [...files.values()].flatMap((file): ArrangedFile[] => {
     const fns = byFile.get(file.key) ?? [];
     return fns.length > 0 ? [{ ...file, fns }] : [];
@@ -192,17 +197,36 @@ function fillBetween(order: readonly Fn[], owner: Map<string, string>): Readonly
 
 /** A file named after its type has no folder of its own; it goes in the folder of the file its code sits beside. */
 function placeGuessedFolders(files: Map<string, { key: string; path: string; placement: Placement; reason: readonly Why[] }>, order: readonly Fn[], owner: ReadonlyMap<string, string>): void {
+  const owners = order.map((fn) => owner.get(fn.addr));
+  const first = new Map<string, number>();
+  owners.forEach((key, ix) => {
+    if (key !== undefined && !first.has(key)) first.set(key, ix);
+  });
+  const exact = owners.map((key) => (key !== undefined && files.get(key)?.placement === "exact" ? key : undefined));
+  const before = nearest(exact, 1);
+  const after = nearest(exact, -1);
   for (const file of files.values()) {
     if (file.placement !== "neighbour") continue;
-    const at = order.findIndex((fn) => owner.get(fn.addr) === file.key);
-    if (at < 0) continue;
-    const near = [...order.slice(0, at)].reverse().concat(order.slice(at + 1)).map((fn) => owner.get(fn.addr)).find((key) => key && files.get(key)?.placement === "exact");
+    const at = first.get(file.key);
+    if (at === undefined) continue;
+    const near = before[at] ?? after[at];
     const folder = near ? dirname(files.get(near)?.path ?? "") : ".";
     if (folder !== ".") {
       file.path = `${folder}/${file.path}`;
       file.reason = [...file.reason, { kind: "beside", file: near?.split("/").pop() ?? "" }];
     }
   }
+}
+
+/** For each position, the closest set entry strictly before it (step 1) or strictly after it (step -1). */
+function nearest(keys: readonly (string | undefined)[], step: 1 | -1): readonly (string | undefined)[] {
+  const found: (string | undefined)[] = new Array(keys.length);
+  let last: string | undefined;
+  for (let ix = step === 1 ? 0 : keys.length - 1; ix >= 0 && ix < keys.length; ix += step) {
+    found[ix] = last;
+    last = keys[ix] ?? last;
+  }
+  return found;
 }
 
 /** Files whose folder nothing in the binary gives: the ones the agent may sort into folders. */
@@ -339,7 +363,6 @@ export async function arrange(input: {
   readonly ask: QuietAsk;
   readonly binaryName: string;
   readonly functions: readonly Fn[];
-  readonly strings: readonly TableRow[];
   readonly types: readonly SwiftType[];
   readonly sources: SourceFiles;
   readonly onStep: (steps: readonly ArrangeStep[]) => void;
@@ -351,14 +374,15 @@ export async function arrange(input: {
   const paths = sources.paths.length;
   const found = t(paths === 1 ? "workbench.arrange.foundOne" : "workbench.arrange.found", { paths: paths.toLocaleString(), types: input.types.length.toLocaleString() });
   onStep([{ label: found, done: true }, { label: t("workbench.arrange.placing"), done: false }]);
-  const base = arrangeFromEvidence(functions, input.strings, input.types, sources);
+  const base = arrangeFromEvidence(functions, input.types, sources);
   input.onEvidence?.(base);
   const placedCount = base.files.reduce((sum, file) => sum + file.fns.length, 0);
   const evidenceSteps: readonly ArrangeStep[] = [
     { label: found, done: true },
     { label: t("workbench.arrange.placed", { count: placedCount.toLocaleString() }), done: true },
   ];
-  const leftFns = base.unplaced.flatMap((addr) => functions.find((fn) => fn.addr === addr) ?? []).filter((fn) => !/^(?:thunk_)?(?:FUN|sub|fcn)_/.test(fn.name));
+  const byAddr = new Map(functions.map((fn) => [fn.addr, fn]));
+  const leftFns = base.unplaced.flatMap((addr) => byAddr.get(addr) ?? []).filter((fn) => !/^(?:thunk_)?(?:FUN|sub|fcn)_/.test(fn.name));
   const askFns = leftFns.length >= MIN_FNS_FOR_AGENT ? leftFns.slice(0, MAX_FOR_AGENT) : [];
   const askFolders = loose(base.files).length >= MIN_FILES_TO_SORT;
   let result = base;

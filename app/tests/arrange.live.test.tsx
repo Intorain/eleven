@@ -42,7 +42,6 @@ test("Calculator arranges into folders: evidence places the code, the agent name
     ask: { agent, native: live.agents.installed.get(agent.id)?.command ?? null, projectId: program.id, binary: { path: program.path } },
     binaryName: program.name,
     functions: program.functions,
-    strings: program.strings,
     types,
     sources: sourceFiles(program.strings.map((row) => row.b), types),
     onStep: (next) => steps.push(next.map((s) => `${s.done ? "✓" : "…"} ${s.label}`).join(" | ")),

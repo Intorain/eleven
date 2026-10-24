@@ -90,7 +90,6 @@ function useArrangement(files: Files, types: readonly SwiftType[]): { readonly s
           ask: { agent, native: chat.agents.installed.get(agent.id)?.command ?? null, projectId: program.id, binary: { path: program.path } },
           binaryName: program.name,
           functions: program.functions,
-          strings: program.strings,
           types,
           sources: files,
           onStep: (next) => {

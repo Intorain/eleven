@@ -45,10 +45,25 @@ export type FileTrace = {
   readonly strings: readonly string[];
 };
 
+const typeIndexes = new WeakMap<readonly SwiftType[], ReadonlyMap<string, readonly SwiftType[]>>();
+
+function typesByTop(types: readonly SwiftType[]): ReadonlyMap<string, readonly SwiftType[]> {
+  const cached = typeIndexes.get(types);
+  if (cached) return cached;
+  const index = new Map<string, SwiftType[]>();
+  for (const type of types) {
+    const top = type.name.split(".")[0] ?? "";
+    const list = index.get(top);
+    if (list) list.push(type);
+    else index.set(top, [type]);
+  }
+  typeIndexes.set(types, index);
+  return index;
+}
+
 /** The file's own types: the one it's named after and everything nested in it. */
 export function typesOfFile(file: string, types: readonly SwiftType[]): readonly SwiftType[] {
-  const stem = stemOf(file);
-  return types.filter((type) => type.name.split(".")[0] === stem);
+  return typesByTop(types).get(stemOf(file)) ?? [];
 }
 
 function escaped(text: string): string {
@@ -61,10 +76,51 @@ function mentions(stem: string): RegExp {
   return new RegExp(`(?:^|[^A-Za-z0-9_])${name}(?:$|[^A-Za-z0-9_])|(?<![0-9])${stem.length}${name}`);
 }
 
+const WORD = /^[A-Za-z0-9_]+$/;
+
+/** Every name `mentions` could find in a function name, so a lookup gives the same answer as the regex. */
+function mentioned(name: string): readonly string[] {
+  const found = name.split(/[^A-Za-z0-9_]+/).filter(Boolean);
+  for (const run of name.matchAll(/(?<![0-9])[1-9][0-9]*/g)) {
+    const start = run.index + run[0].length;
+    const end = start + Number(run[0]);
+    if (end <= name.length) found.push(name.slice(start, end));
+  }
+  return found;
+}
+
+type FnIndex = { readonly known: ReadonlySet<string>; readonly byName: ReadonlyMap<string, readonly string[]> };
+
+const fnIndexes = new WeakMap<readonly Fn[], FnIndex>();
+
+/** Built once per function list: a large binary has hundreds of thousands of functions and thousands of files. */
+function fnIndex(functions: readonly Fn[]): FnIndex {
+  const cached = fnIndexes.get(functions);
+  if (cached) return cached;
+  const byName = new Map<string, string[]>();
+  for (const fn of functions) {
+    if (fn.kind !== "function") continue;
+    for (const name of mentioned(fn.name)) {
+      const addrs = byName.get(name);
+      if (!addrs) byName.set(name, [fn.addr]);
+      else if (addrs.at(-1) !== fn.addr) addrs.push(fn.addr);
+    }
+  }
+  const index = { known: new Set(functions.map((fn) => fn.addr)), byName };
+  fnIndexes.set(functions, index);
+  return index;
+}
+
+function namedAfter(stem: string, functions: readonly Fn[]): readonly string[] {
+  if (WORD.test(stem)) return fnIndex(functions).byName.get(stem) ?? [];
+  const named = mentions(stem);
+  return functions.filter((fn) => fn.kind === "function" && named.test(fn.name)).map((fn) => fn.addr);
+}
+
 /** What the binary ties to a file without asking the engine: the types' metadata and the function names. */
 export function traceStatic(file: string, guessed: boolean, types: readonly SwiftType[], functions: readonly Fn[], strings: readonly TableRow[]): FileTrace {
   const own = typesOfFile(file, types);
-  const known = new Set(functions.map((fn) => fn.addr));
+  const { known } = fnIndex(functions);
   const fns = new Map<string, TracedFn>();
   const add = (addr: string, why: TraceReason): void => {
     if (known.has(addr) && !fns.has(addr)) fns.set(addr, { addr, why });
@@ -74,8 +130,7 @@ export function traceStatic(file: string, guessed: boolean, types: readonly Swif
     if (type.accessor) add(type.accessor, "accessor");
   }
   const stem = stemOf(file);
-  const named = mentions(stem);
-  for (const fn of functions) if (fn.kind === "function" && named.test(fn.name)) add(fn.addr, "named");
+  for (const addr of namedAfter(stem, functions)) add(addr, "named");
   const said = strings.filter((row) => row.b.includes(stem)).slice(0, MAX_STRINGS).map((row) => row.b);
   return { file, guessed, types: own, fns: [...fns.values()], strings: said };
 }
@@ -85,7 +140,7 @@ export async function traceFile(program: Program, file: string, guessed: boolean
   const base = traceStatic(file, guessed, types, program.functions, program.strings);
   const codeUsing = program.codeUsing;
   if (guessed || !codeUsing) return base;
-  const known = new Set(program.functions.map((fn) => fn.addr));
+  const { known } = fnIndex(program.functions);
   const sites = program.strings.filter((row) => row.b.includes(file));
   const users = (await Promise.all(sites.map(async (row) => {
     try {
