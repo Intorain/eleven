@@ -1,5 +1,5 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -101,8 +101,10 @@ export function reaEnv(s: Settings = currentSettings(), objc = false): Record<st
   const memory = MAXMEM[s.ghidraMemory];
   const inherited = (process.env.REA_GHIDRA_DISABLED_ANALYZERS ?? "").split(",").map((name) => name.trim()).filter(Boolean);
   const disabled = [...new Set([...inherited, ...(s.rebuildSwitches ? [] : ["Decompiler Switch Analysis"]), ...(s.swiftNames ? [] : ["Demangler Swift"]), ...(objc && !s.objcCalls ? [OBJC_MESSAGES] : [])])];
+  const analyzed = join(s.cacheDir || cacheDir(), "ghidra-analysis");
   return {
     REA_GHIDRA_STARTUP_TIMEOUT_MS: String(ghidraStartupMs(s)),
+    ...(isAbsolute(analyzed) ? { REA_GHIDRA_ANALYSIS_CACHE: analyzed } : {}),
     ...(memory ? { GHIDRA_MAXMEM: memory } : {}),
     ...(disabled.length > 0 ? { REA_GHIDRA_DISABLED_ANALYZERS: disabled.join(",") } : {}),
   };
