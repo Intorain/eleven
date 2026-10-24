@@ -24,9 +24,9 @@ async function fileOffset(path: string, address: string): Promise<number> {
 }
 
 beforeAll(async () => {
-  process.env.ELEVEN_EXPORT_DIR = mkdtempSync(join(tmpdir(), "eleven-patch-"));
   await adoptLoginShell();
   adoptToolchain();
+  process.env.ELEVEN_EXPORT_DIR = mkdtempSync(join(tmpdir(), "eleven-patch-"));
 });
 
 test("M8: patches are recorded, accumulate, and the copy applies every one without touching the original", async () => {
