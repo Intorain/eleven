@@ -6,6 +6,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 import { readCachedText } from "../agents/launch";
 import { errorMessage, isRecord, recordField, stringField } from "../lib/guards";
+import { tie } from "../lib/reaper";
 import { SerialQueue } from "../lib/serial";
 import { cacheDir } from "../settings/actions";
 import { currentSettings, pathSetting, type Settings } from "../settings/store";
@@ -157,8 +158,10 @@ class Rea {
     const client = new Client({ name: "eleven", version: "0.1.0" });
     const transport = reaTransport();
     await client.connect(transport);
+    const untie = tie(transport.pid ?? undefined);
     process.once("exit", () => void transport.close());
     client.onclose = () => {
+      untie();
       if (this.client === client) this.client = null;
       this.session = null;
     };

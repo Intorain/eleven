@@ -5,6 +5,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, type CallToolResult, CallToolResultSchema, ListToolsRequestSchema, type ListToolsResult } from "@modelcontextprotocol/sdk/types.js";
 
 import { reaCallOptions, reaEnv, reaLaunch } from "../engine/rea";
+import { tie } from "../lib/reaper";
 import { hidePaths } from "./privacy";
 
 /** REA tools that would write names, comments and bookmarks behind Eleven's back, and the `eleven` tool to use instead. */
@@ -30,7 +31,9 @@ function env(): Record<string, string> {
 export async function runReaProxy(): Promise<void> {
   const { command, args } = reaLaunch();
   const rea = new Client({ name: "eleven", version: "0.1.0" });
-  await rea.connect(new StdioClientTransport({ command, args: [...args], env: env(), stderr: "inherit" }));
+  const transport = new StdioClientTransport({ command, args: [...args], env: env(), stderr: "inherit" });
+  await rea.connect(transport);
+  tie(transport.pid ?? undefined);
   const instructions = rea.getInstructions();
   const server = new Server(
     { name: "rea", version: rea.getServerVersion()?.version ?? "0" },

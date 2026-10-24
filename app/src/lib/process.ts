@@ -1,6 +1,8 @@
 import { type ChildProcess, type ChildProcessWithoutNullStreams, type ExecFileOptions, type ExecFileSyncOptions, execFile, execFileSync, type SpawnOptions, type SpawnOptionsWithoutStdio, spawn } from "node:child_process";
 import { promisify } from "node:util";
 
+import { tieChild } from "./reaper";
+
 /** Every program Eleven starts goes through here, so on Windows none of them opens a console window of its own. */
 const HIDDEN = { windowsHide: true } as const;
 
@@ -25,13 +27,17 @@ export function launchLine(file: string, args: readonly string[], platform: Node
 /** Runs a program to completion and returns its text output. */
 export function run(file: string, args: readonly string[] = [], options: ExecFileOptions = {}): Promise<{ readonly stdout: string; readonly stderr: string }> {
   const launch = launchLine(file, args);
-  return exec(launch.file, [...launch.args], { ...options, ...HIDDEN, shell: launch.shell, encoding: "utf8" });
+  const pending = exec(launch.file, [...launch.args], { ...options, ...HIDDEN, shell: launch.shell, encoding: "utf8" });
+  tieChild(pending.child);
+  return pending;
 }
 
 /** The same, for programs whose output is binary. */
 export function runBytes(file: string, args: readonly string[] = [], options: ExecFileOptions = {}): Promise<{ readonly stdout: Buffer; readonly stderr: Buffer }> {
   const launch = launchLine(file, args);
-  return exec(launch.file, [...launch.args], { ...options, ...HIDDEN, shell: launch.shell, encoding: "buffer" });
+  const pending = exec(launch.file, [...launch.args], { ...options, ...HIDDEN, shell: launch.shell, encoding: "buffer" });
+  tieChild(pending.child);
+  return pending;
 }
 
 /** Runs a program to completion, blocking, and returns its text output. */
@@ -43,13 +49,14 @@ export function runSync(file: string, args: readonly string[] = [], options: Exe
 /** Starts a long-running program with its input and output piped to Eleven. */
 export function start(command: string, args: readonly string[] = [], options: SpawnOptionsWithoutStdio = {}): ChildProcessWithoutNullStreams {
   const launch = launchLine(command, args);
-  return spawn(launch.file, [...launch.args], { ...options, ...HIDDEN, shell: launch.shell });
+  return tieChild(spawn(launch.file, [...launch.args], { ...options, ...HIDDEN, shell: launch.shell }));
 }
 
 /** Starts a program with its own stdio setup, like a detached helper or one whose output is ignored. */
 export function startWith(command: string, args: readonly string[], options: SpawnOptions): ChildProcess {
   const launch = launchLine(command, args);
-  return spawn(launch.file, [...launch.args], { ...options, ...HIDDEN, shell: launch.shell });
+  const child = spawn(launch.file, [...launch.args], { ...options, ...HIDDEN, shell: launch.shell });
+  return options.detached ? child : tieChild(child);
 }
 
 /** Stops a program and everything it started. On Windows killing the parent leaves its children running, like an agent behind an npm launcher. */
