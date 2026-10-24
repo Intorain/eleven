@@ -136,7 +136,7 @@ function ArrangeButton({ onClick }: { readonly onClick: () => void }): ReactElem
   const { p } = useTheme();
   return (
     <Tooltip label={t("workbench.side.arrange.hint")}>
-      <div onClick={onClick} role="button" aria-label={t("workbench.side.arrange")} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, height: 30, flexShrink: 0, marginTop: 4, marginBottom: 8, borderRadius: 8, backgroundColor: p.fill, fontSize: 12.5, color: p.text, cursor: "pointer", hover: HOVER }}>
+      <div onClick={onClick} role="button" aria-label={t("workbench.side.arrange")} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 7, height: 30, flexGrow: 1, flexShrink: 0, marginTop: 4, marginBottom: 8, borderRadius: 8, backgroundColor: p.fill, fontSize: 12.5, color: p.text, cursor: "pointer", hover: HOVER }}>
         <Icon name="spark" size={13} color={p.data} />
         <div style={{ pointerEvents: "none" }}>{t("workbench.side.arrange")}</div>
       </div>
