@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
-import { basename, isAbsolute, join } from "node:path";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { basename, dirname, isAbsolute, join } from "node:path";
 
 import * as acp from "@agentclientprotocol/sdk";
 
@@ -10,6 +10,7 @@ import { AGENT_ENV, BRIDGE_ENV, CHAT_ENV, ELEVEN_SERVER } from "../bridge/protoc
 import { errorMessage } from "../lib/guards";
 import { toWebReadable, toWebWritable } from "../lib/streams";
 import { currentSettings, loadSettings, pathSetting } from "../settings/store";
+import { isAndroidCode } from "../engine/jadx";
 import { reaEnv } from "../engine/rea";
 import type { NativeCommand } from "./detect";
 import type { AgentEvent, PermissionChoice, SessionOption } from "./events";
@@ -38,14 +39,33 @@ function selfServer(name: string, flag: string, env: acp.EnvVariable[]): acp.Mcp
   return { name, command: process.execPath, args, env };
 }
 
-/** REA, behind Eleven's filter so names, comments and bookmarks go through Eleven's project. */
-function reaServer(): acp.McpServer {
+/** REA tools every project needs: the engine, functions, bytes, Mach-O/ELF/PE readers, Evidence and comparisons. */
+const NATIVE_FAMILIES = ["direct", "enhanced", "native", "artifact", "session", "application", "frida"] as const;
+const ANDROID_FAMILIES = [...NATIVE_FAMILIES, "android", "apktool", "adb", "jeb", "flutter"] as const;
+const ELECTRON_FAMILIES = [...NATIVE_FAMILIES, "electron", "browser", "javascript-runtime"] as const;
+
+/** The Mach-O executable of an Electron app sits beside this framework. */
+function isElectronApp(file: string): boolean {
+  return existsSync(join(dirname(file), "..", "Frameworks", "Electron Framework.framework"));
+}
+
+/** Which REA tool families an agent sees for the open file, so a Mac app's agent isn't handed the adb and browser catalogs. */
+export function reaToolFamilies(file: string | null): string {
+  if (file === null) return [...NATIVE_FAMILIES, "android", "apktool", "electron", "browser"].join(",");
+  if (isAndroidCode(file)) return ANDROID_FAMILIES.join(",");
+  if (isElectronApp(file)) return ELECTRON_FAMILIES.join(",");
+  return NATIVE_FAMILIES.join(",");
+}
+
+/** REA, behind Eleven's filter so names, comments and bookmarks go through Eleven's project. Advertises only the families the file calls for, with bounded output schemas, since agents pay context for every one. */
+function reaServer(file: string | null): acp.McpServer {
   const env = PASS_THROUGH_ENV.flatMap((name) => {
     const value = process.env[name];
     return value ? [{ name, value }] : [];
   });
   const knobs = Object.entries(reaEnv()).map(([name, value]) => ({ name, value }));
-  return selfServer(REA_SERVER, "--rea-mcp", [...env, ...knobs]);
+  const scope = [{ name: "REA_MCP_TOOL_FAMILIES", value: reaToolFamilies(file) }, { name: "REA_MCP_OUTPUT_SCHEMA_PROFILE", value: "compact" }];
+  return selfServer(REA_SERVER, "--rea-mcp", [...env, ...knobs, ...scope]);
 }
 
 function envList(value: unknown): acp.EnvVariable[] {
@@ -73,10 +93,10 @@ function customServer(command: string): readonly acp.McpServer[] {
   return program ? [{ name: "custom", command: program, args, env: [] }] : [];
 }
 
-function toolServers(agent: string, chat: string): acp.McpServer[] {
+function toolServers(agent: string, chat: string, file: string | null): acp.McpServer[] {
   const s = currentSettings();
   return [
-    ...(s.reaTools ? [reaServer()] : []),
+    ...(s.reaTools ? [reaServer(file)] : []),
     ...(s.elevenTools ? elevenServer(agent, chat) : []),
     ...(s.idaTools ? idaServer() : []),
     ...customServer(s.customToolServer),
@@ -207,7 +227,7 @@ export class AgentSession {
     this.connection = this.connect(await resolveLaunch(this.agent, this.native));
     const init = await this.connection.initialize({ protocolVersion: acp.PROTOCOL_VERSION, clientCapabilities: { session: { notices: {} } } });
     this.prompts = init.agentCapabilities?.promptCapabilities ?? {};
-    const session = await this.connection.newSession({ cwd: this.cwd, mcpServers: this.tools ? toolServers(shortName(this.agent.name), this.chat) : [] });
+    const session = await this.connection.newSession({ cwd: this.cwd, mcpServers: this.tools ? toolServers(shortName(this.agent.name), this.chat, this.file) : [] });
     this.sessionId = session.sessionId;
     this.emit({ kind: "connected", agent: shortName(init.agentInfo?.title ?? init.agentInfo?.name ?? this.agent.name) });
     this.publish(mergeOptions(configOptions(session.configOptions), legacyModes(session.modes)));

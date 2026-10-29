@@ -351,7 +351,7 @@ export const en = {
   "settings.ghidraMemory.desc": "Big apps open faster with more. Automatic picks 2 to 4 GB from what {device} has.",
   "settings.ghidraMemory.automatic": "Automatic",
   "settings.ghidraTimeout": "Analysis time limit",
-  "settings.ghidraTimeout.desc": "How long Ghidra may spend on a file before it gives up. Big apps can need hours. Restart Eleven after changing it.",
+  "settings.ghidraTimeout.desc": "How long Ghidra, or jadx for an Android app, may spend on a file before it gives up. Big apps can need hours. Restart Eleven after changing it.",
   "settings.ghidraTimeout.minutes": "{count} minutes",
   "settings.ghidraTimeout.hours": "{count} hours",
   "settings.findParameters": "Work out function parameters",

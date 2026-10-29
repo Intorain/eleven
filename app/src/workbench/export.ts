@@ -1,9 +1,10 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { cacheDir } from "../settings/actions";
 import { currentSettings, pathSetting } from "../settings/store";
 
-import { isRecord, stringField } from "../lib/guards";
+import { isRecord, recordField, stringField } from "../lib/guards";
 import { rea } from "../engine/rea";
 import type { Program } from "./model";
 import { openExternal, reveal } from "../lib/platform";
@@ -81,17 +82,52 @@ export async function exportObjcInventory(program: Program): Promise<string> {
   return write(program, `${safe(program.name)}-objc.txt`, objcInventory(program.name, classes, protocols));
 }
 
-/** Writes every function's pseudocode to one file, decompiled in a single REA call. */
-export async function exportAllPseudocode(program: Program): Promise<string> {
-  const addresses = program.functions.map((fn) => fn.addr);
-  const reply = await rea.tool(program.path, "batch_decompile", { addresses });
-  const items = isRecord(reply) && Array.isArray(reply.items) ? reply.items : [];
-  const body = items
-    .flatMap((item) => {
-      const name = isRecord(item) ? stringField(item.procedure, "name") ?? stringField(item, "address") : null;
-      const code = stringField(item, "pseudocode");
-      return name && code ? [`// ${name}\n${code.trim()}\n`] : [];
+/** Functions per REA call, so each call ends well inside its deadline and a stopped export keeps what it wrote. */
+const DECOMPILE_BATCH = 500;
+
+type Decompiled = { readonly address: string; readonly name: string; readonly file: string };
+
+function remaining(manifest: unknown): number {
+  const value = recordField(manifest, "counts")?.remaining;
+  return typeof value === "number" ? value : 0;
+}
+
+/** Each function REA wrote, from its index, in the order the sidebar lists them. */
+async function decompiledFunctions(program: Program, dir: string, indexPath: string): Promise<readonly Decompiled[]> {
+  const parsed: unknown = JSON.parse(await readFile(indexPath, "utf8"));
+  const functions = isRecord(parsed) && Array.isArray(parsed.functions) ? parsed.functions : [];
+  const order = new Map(program.functions.map((fn, ix) => [fn.addr, ix]));
+  return functions
+    .flatMap((entry): Decompiled[] => {
+      const address = stringField(entry, "address");
+      const relative = stringField(entry, "relative_path");
+      if (!address || !relative || stringField(entry, "status") !== "written") return [];
+      return [{ address, name: stringField(entry, "name") ?? address, file: join(dir, relative) }];
     })
-    .join("\n");
-  return write(program, `${safe(program.name)}-pseudocode.c`, body);
+    .sort((a, b) => (order.get(a.address) ?? order.size) - (order.get(b.address) ?? order.size));
+}
+
+/** REA heads each file with comment lines about the function, then a blank line, then the pseudocode. */
+function pseudocodeOf(text: string): string {
+  const split = text.indexOf("\n\n");
+  return (split < 0 ? text : text.slice(split + 2)).trim();
+}
+
+/** Writes every function's pseudocode to one file. REA decompiles them in batches into a cache folder, so a huge binary never has to fit one reply. */
+export async function exportAllPseudocode(program: Program): Promise<string> {
+  const dir = join(cacheDir(), program.id, "decompile-all");
+  await rm(dir, { recursive: true, force: true });
+  await mkdir(join(dir, ".."), { recursive: true });
+  let indexPath: string | null = null;
+  let resume = false;
+  do {
+    const manifest = await rea.tool(program.path, "decompile_all", { output_directory: dir, limit: DECOMPILE_BATCH, resume });
+    indexPath = stringField(manifest, "index_path") ?? indexPath;
+    resume = true;
+    if (remaining(manifest) === 0) break;
+  } while (true);
+  if (!indexPath) throw new Error("REA didn't say where it wrote the pseudocode.");
+  const files = await decompiledFunctions(program, dir, indexPath);
+  const parts = await Promise.all(files.map(async (fn) => `// ${fn.name}\n${pseudocodeOf(await readFile(fn.file, "utf8"))}\n`));
+  return write(program, `${safe(program.name)}-pseudocode.c`, parts.join("\n"));
 }

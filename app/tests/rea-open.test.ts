@@ -23,6 +23,8 @@ test("the analysis time limit sets ghidra's deadline and every caller waits a li
   expect(ghidraStartupMs({ ...s, ghidraTimeout: "30 minutes" })).toBe(30 * 60_000);
   const sixHours = { ...s, ghidraTimeout: "6 hours" } as const;
   expect(reaEnv(sixHours).REA_GHIDRA_STARTUP_TIMEOUT_MS).toBe(String(6 * 3_600_000));
+  expect(reaEnv(sixHours).REA_JADX_OPERATION_TIMEOUT_MS).toBe(String(6 * 3_600_000));
+  expect(reaEnv(sixHours).REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS).toBe("30");
   expect(reaCallOptions(sixHours)).toEqual({ timeout: 6 * 3_600_000 + 5 * 60_000, resetTimeoutOnProgress: true });
 });
 

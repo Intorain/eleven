@@ -1930,7 +1930,7 @@
   "settings.usageStats": "分享功能使用情况",
   "settings.usageStats.desc": "例如控制流图被打开的次数。默认关闭。",
   "settings.ghidraTimeout": "分析时间上限",
-  "settings.ghidraTimeout.desc": "Ghidra 处理一个文件最多能用多久，超时就放弃。大应用可能需要几个小时。修改后请重启 Eleven。",
+  "settings.ghidraTimeout.desc": "Ghidra（Android 应用则是 jadx）处理一个文件最多能用多久，超时就放弃。大应用可能需要几个小时。修改后请重启 Eleven。",
   "settings.ghidraTimeout.minutes": "{count} 分钟",
   "settings.ghidraTimeout.hours": "{count} 小时",
   "settings.about.support": "支持 Eleven",

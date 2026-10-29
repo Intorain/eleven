@@ -92,11 +92,14 @@ function plainEnv(objc: boolean): Record<string, string> {
 
 const MAXMEM: Readonly<Record<Settings["ghidraMemory"], string | null>> = { Automatic: null, "2 GB": "2G", "4 GB": "4G", "8 GB": "8G", "16 GB": "16G", "32 GB": "32G", "64 GB": "64G" };
 
+/** How long Ghidra may decompile one function, so a single huge one can't stall a whole export. */
+const DECOMPILE_SECONDS = 30;
+
 /** Ghidra only has this analyzer for Objective-C Mach-O files, and naming one a file lacks stops the open. */
 const OBJC_MESSAGES = "Objective-C Message Analyzer";
 const OBJC_REFUSED = `Unknown Ghidra analyzer for this program: ${OBJC_MESSAGES}`;
 
-/** Ghidra knobs from Settings → Analysis, as the environment REA reads when it starts Ghidra. `objc` says the file has Objective-C messages. */
+/** Engine knobs from Settings → Analysis, as the environment REA reads when it starts Ghidra or jadx. `objc` says the file has Objective-C messages. */
 export function reaEnv(s: Settings = currentSettings(), objc = false): Record<string, string> {
   const memory = MAXMEM[s.ghidraMemory];
   const inherited = (process.env.REA_GHIDRA_DISABLED_ANALYZERS ?? "").split(",").map((name) => name.trim()).filter(Boolean);
@@ -104,6 +107,8 @@ export function reaEnv(s: Settings = currentSettings(), objc = false): Record<st
   const analyzed = join(s.cacheDir || cacheDir(), "ghidra-analysis");
   return {
     REA_GHIDRA_STARTUP_TIMEOUT_MS: String(ghidraStartupMs(s)),
+    REA_JADX_OPERATION_TIMEOUT_MS: String(ghidraStartupMs(s)),
+    REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: String(DECOMPILE_SECONDS),
     ...(isAbsolute(analyzed) ? { REA_GHIDRA_ANALYSIS_CACHE: analyzed } : {}),
     ...(memory ? { GHIDRA_MAXMEM: memory } : {}),
     ...(disabled.length > 0 ? { REA_GHIDRA_DISABLED_ANALYZERS: disabled.join(",") } : {}),
@@ -274,7 +279,7 @@ class Rea {
     const cached = await readCachedText(file);
     if (cached !== null) return JSON.parse(cached);
     await this.ensureOpen(target.path);
-    const reply = await this.call("analyze_function", { procedure });
+    const reply = await this.call("analyze_function", { procedure, detail: "complete" });
     const value = recordField(recordField(reply, "raw_result"), "value") ?? null;
     if (!value) throw new Error("REA didn't describe this function.");
     await mkdir(dirname(file), { recursive: true });
