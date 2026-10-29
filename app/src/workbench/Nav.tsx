@@ -1,6 +1,6 @@
 import { statSync } from "node:fs";
 
-import { type ReactElement, useEffect, useMemo, useState } from "react";
+import { type ReactElement, useEffect, useLayoutEffect, useMemo, useState } from "react";
 
 import { EmptyState } from "../components/kit";
 import { binaryInfoOf } from "../engine/binaryInfo";
@@ -20,7 +20,7 @@ import { functionRows, type FnShow, type FnSort, sourcePaths } from "./sidebar/m
 import { Faint, useSectionOpen } from "./sidebar/parts";
 import { Blocks, InThisModel, Kernels } from "./sidebar/ModelSections";
 import { Chats, FileViews, YourWork } from "./sidebar/Sections";
-import { SourceFiles } from "./sidebar/SourceFiles";
+import { useSourceFileItems } from "./sidebar/SourceFiles";
 import { Resources } from "./sidebar/Resources";
 import { ProjectSwitcher } from "./sidebar/Top";
 
@@ -67,7 +67,8 @@ function useFolderMemory(hasSources: boolean | null): FolderState & { readonly f
     setReady(false);
     setFlipped(new Set(loadFolds(program.id).flipped));
   }, [program.id]);
-  useEffect(() => {
+  // Before paint, so no frame shows the sections folded the default way and then flips them.
+  useLayoutEffect(() => {
     if (hasSources === null || ready) return;
     const saved = loadFolds(program.id).closed;
     wb.patch({ navClosed: saved ?? (hasSources ? ["functions"] : []) });
@@ -98,6 +99,7 @@ function NavList({ view, flipped, hasSources }: { readonly view: FnView; readonl
   const gpu = chat.target?.kind === "gpu";
   const noCode = chat.target?.kind === "model" || gpu;
   const fnFlipped = useMemo(() => new Set([...flipped].filter((key) => key.startsWith(FN_KEY)).map((key) => key.slice(FN_KEY.length))), [flipped]);
+  const sourceItems = useSourceFileItems(!noCode);
   const query = wb.s.filter.trim();
   const rows = useMemo(
     () => (open && !noCode ? functionRows(program.functions, { nameOf, renamed: new Set(wb.s.names.keys()), query: wb.s.filter, show: view.show, sort: view.sort, ...(view.modules ? { modules: view.modules } : {}), flipped: fnFlipped, yoursOpen: hasSources === false, bareFiles: program.bareFiles ?? [] }) : []),
@@ -107,7 +109,7 @@ function NavList({ view, flipped, hasSources }: { readonly view: FnView; readonl
   const firstMatch = rows.find((row) => row.kind === "fn");
   const fixed = noCode
     ? gpu ? [<Chats key="threads" />, <Kernels key="kernels" />] : [<Chats key="threads" />, <InThisModel key="model" />, <Blocks key="blocks" />]
-    : [<Chats key="threads" />, <YourWork key="work" />, <FileViews key="views" />, <SourceFiles key="source" />, <Resources key="resources" />, <FunctionsHead key="functions" view={view} first={firstMatch?.kind === "fn" ? firstMatch.fn.addr : null} />];
+    : [<Chats key="threads" />, <YourWork key="work" />, <FileViews key="views" />, ...sourceItems, <Resources key="resources" />, <FunctionsHead key="functions" view={view} first={firstMatch?.kind === "fn" ? firstMatch.fn.addr : null} />];
   const after = searching
     ? [<MatchNote key="note" count={rows.length} yoursFirst={view.sort === "files"} />]
     : open && !noCode && rows.length === 0 ? [program.functions.length === 0 ? <Faint key="none" text={t("workbench.side.loadingFunctions")} /> : (
@@ -118,7 +120,8 @@ function NavList({ view, flipped, hasSources }: { readonly view: FnView; readonl
   const total = fixed.length + rows.length + after.length;
   const shown = useListWindow(total);
   const itemAt = (ix: number): ReactElement | undefined => {
-    if (ix < fixed.length) return <div key={`s${ix}`} style={{ display: "flex", flexDirection: "column", width: "100%" }}>{fixed[ix]}</div>;
+    const item = fixed[ix];
+    if (item) return <div key={item.key ?? `s${ix}`} style={{ display: "flex", flexDirection: "column", width: "100%" }}>{item}</div>;
     const row = rows[ix - fixed.length];
     if (row) return <FnRowView key={row.kind === "node" ? `n:${row.path}` : row.fn.addr} row={row} />;
     return after[ix - fixed.length - rows.length];

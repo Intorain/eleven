@@ -90,10 +90,13 @@ export function Heading({ id, title, count }: { readonly id: NavSection; readonl
 }
 
 /** A heading and, while open, its rows, with room after them before the next heading. */
+/** Space under an open section, before the next heading. */
+export const SECTION_GAP = 10;
+
 export function SideSection({ id, title, count, children }: { readonly id: NavSection; readonly title: string; readonly count: string; readonly children: ReactNode }): ReactElement {
   const { open } = useSectionOpen(id);
   return (
-    <div style={{ display: "flex", flexDirection: "column", flexShrink: 0, width: "100%", paddingBottom: open ? 10 : 0 }}>
+    <div style={{ display: "flex", flexDirection: "column", flexShrink: 0, width: "100%", paddingBottom: open ? SECTION_GAP : 0 }}>
       <Heading id={id} title={title} count={count} />
       {open && children}
     </div>

@@ -20,7 +20,7 @@ import { type Bench, ELLIPSIS, HOVER, MONO_STYLE, useBench } from "../parts";
 import { type SourceFiles as Files, sourceFiles, traceStatic } from "../sources";
 import { useFolders } from "./memory";
 import { sourceTree } from "./model";
-import { SideSection } from "./parts";
+import { Heading, SECTION_GAP, useSectionOpen } from "./parts";
 import { TreeCaption, TreeFile, TreeFolder, TreeMore } from "./SourceRows";
 
 const GUESSED_SHOWN = 7;
@@ -28,6 +28,7 @@ const UNPLACED_SHOWN = 50;
 const FRAME_MS = 33;
 const NO_TYPES: readonly SwiftType[] = [];
 const NO_FILES: ReadonlySet<string> = new Set();
+const NO_SOURCES: Files = { paths: [], library: [], guessed: [] };
 type State =
   | { readonly kind: "plain" }
   | { readonly kind: "running"; readonly steps: readonly ArrangeStep[]; readonly evidence: Arrangement | null }
@@ -316,7 +317,7 @@ function useFileRow(): (file: string, name: string, depth: number, ext: string, 
 }
 
 /** The paths the binary names, the files guessed from its types, then the Swift library's own files folded away. */
-function PlainList({ files, counts }: { readonly files: Files; readonly counts: ReadonlyMap<string, string> }): ReactElement {
+function usePlainRows(files: Files, counts: ReadonlyMap<string, string>): readonly ReactElement[] {
   const folders = useFolders();
   const fileRow = useFileRow();
   const [more, setMore] = useState(false);
@@ -324,36 +325,36 @@ function PlainList({ files, counts }: { readonly files: Files; readonly counts: 
   const tree = useMemo(() => sourceTree(files.paths, closed), [files, closed]);
   const guessed = more ? files.guessed : files.guessed.slice(0, GUESSED_SHOWN);
   const library = folders.isOpen("src:#library");
-  return (
-    <>
-      {files.paths.length > 0 && <TreeCaption text={t("workbench.side.fromPaths")} first />}
-      {tree.map((node) => node.folder
-        ? <TreeFolder key={node.path} name={node.name} open={!closed.has(node.path)} depth={node.depth} onClick={() => folders.toggle(`src:${node.path}`)} />
-        : fileRow(node.full, node.name, node.depth, node.ext, { count: counts.get(node.full) ?? "" }))}
-      {files.guessed.length > 0 && <TreeCaption text={t("workbench.side.fromTypes")} first={files.paths.length === 0} />}
-      {guessed.map((g) => fileRow(g.file, g.file, -1, "swift", { count: counts.get(g.file) ?? "", dim: true }))}
-      {files.guessed.length > GUESSED_SHOWN && <TreeMore label={more ? t("workbench.side.showFewer") : t("workbench.side.more", { count: files.guessed.length - GUESSED_SHOWN })} onClick={() => setMore(!more)} />}
-      {files.library.length > 0 && (
-        <>
-          <TreeCaption text="" first={false} />
-          <TreeFolder name={t("workbench.side.swiftLibrary")} open={library} depth={0} count={String(files.library.length)} faint onClick={() => folders.toggle("src:#library")} />
-          {library && files.library.map((path) => fileRow(path, path.split("/").pop() ?? path, 0, "swift", { count: "", dim: true }))}
-        </>
-      )}
-    </>
-  );
+  return [
+    ...(files.paths.length > 0 ? [<TreeCaption key="src:#paths" text={t("workbench.side.fromPaths")} first />] : []),
+    ...tree.map((node) => node.folder
+      ? <TreeFolder key={`src:${node.path}`} name={node.name} open={!closed.has(node.path)} depth={node.depth} onClick={() => folders.toggle(`src:${node.path}`)} />
+      : fileRow(node.full, node.name, node.depth, node.ext, { count: counts.get(node.full) ?? "" })),
+    ...(files.guessed.length > 0 ? [<TreeCaption key="src:#types" text={t("workbench.side.fromTypes")} first={files.paths.length === 0} />] : []),
+    ...guessed.map((g) => fileRow(g.file, g.file, -1, "swift", { count: counts.get(g.file) ?? "", dim: true })),
+    ...(files.guessed.length > GUESSED_SHOWN ? [<TreeMore key="src:#more" label={more ? t("workbench.side.showFewer") : t("workbench.side.more", { count: files.guessed.length - GUESSED_SHOWN })} onClick={() => setMore(!more)} />] : []),
+    ...(files.library.length > 0
+      ? [
+          <TreeCaption key="src:#librarygap" text="" first={false} />,
+          <TreeFolder key="src:#library" name={t("workbench.side.swiftLibrary")} open={library} depth={0} count={String(files.library.length)} faint onClick={() => folders.toggle("src:#library")} />,
+          ...(library ? files.library.map((path) => fileRow(path, path.split("/").pop() ?? path, 0, "swift", { count: "", dim: true })) : []),
+        ]
+      : []),
+  ];
 }
 
 /** The arranged project: folders as the app had them, each file marked by how it got there, then what's left unplaced. */
-function ArrangedTree({ arrangement, agent }: { readonly arrangement: Arrangement; readonly agent: string }): ReactElement {
+function useArrangedRows(arrangement: Arrangement | null, agent: string): readonly ReactElement[] {
   const { p } = useTheme();
   const { openFn, nameOf } = useBench();
   const folders = useFolders();
   const fileRow = useFileRow();
-  const byPath = useMemo(() => new Map(arrangement.files.map((file) => [file.path, file])), [arrangement]);
-  const paths = useMemo(() => arrangement.files.map((file) => file.path), [arrangement]);
+  const files = arrangement?.files;
+  const byPath = useMemo(() => new Map((files ?? []).map((file) => [file.path, file])), [files]);
+  const paths = useMemo(() => (files ?? []).map((file) => file.path), [files]);
   const closed = useMemo(() => closedFolders(paths, folders.isOpen, "arr:"), [paths, folders]);
   const tree = useMemo(() => sourceTree(paths, closed), [paths, closed]);
+  if (!arrangement) return [];
   const unplacedOpen = folders.isOpen("arr:#unplaced");
   const mark = (file: ArrangedFile): ReactElement => {
     const label = placementLabel(file.placement, agent);
@@ -363,31 +364,50 @@ function ArrangedTree({ arrangement, agent }: { readonly arrangement: Arrangemen
       </Tooltip>
     );
   };
-  return (
-    <>
-      {tree.map((node) => {
-        if (node.folder) return <TreeFolder key={node.path} name={node.name} open={!closed.has(node.path)} depth={node.depth} onClick={() => folders.toggle(`arr:${node.path}`)} />;
-        const file = byPath.get(node.full);
-        return file ? fileRow(file.key, node.name, node.depth, node.ext, { count: String(file.fns.length), italic: file.placement === "guess", mark: mark(file), why: t("workbench.side.placedWhy", { how: placementLabel(file.placement, agent), reason: reasonText(file.reason) }) }) : null;
-      })}
-      {arrangement.unplaced.length > 0 && <TreeFolder name={t("workbench.side.notPlaced")} open={unplacedOpen} depth={0} count={arrangement.unplaced.length.toLocaleString()} faint onClick={() => folders.toggle("arr:#unplaced")} />}
-      {unplacedOpen && arrangement.unplaced.slice(0, UNPLACED_SHOWN).map((addr) => (
-        <div key={addr} onClick={() => openFn(addr, true)} role="treeitem" aria-label={t("workbench.side.functionNamed", { name: nameOf(addr) })} style={{ display: "flex", alignItems: "center", gap: 8, height: 24, flexShrink: 0, paddingLeft: 38, paddingRight: 8, borderRadius: 6, cursor: "pointer", hover: HOVER }}>
-          <Icon name="function" size={12} color={p.link} />
-          <div style={{ flexGrow: 1, minWidth: 0, fontSize: 12, color: p.text3, pointerEvents: "none", ...MONO_STYLE, ...ELLIPSIS }}>{nameOf(addr)}</div>
-        </div>
-      ))}
-    </>
-  );
+  return [
+    ...tree.flatMap((node) => {
+      if (node.folder) return [<TreeFolder key={`arr:${node.path}`} name={node.name} open={!closed.has(node.path)} depth={node.depth} onClick={() => folders.toggle(`arr:${node.path}`)} />];
+      const file = byPath.get(node.full);
+      return file ? [fileRow(file.key, node.name, node.depth, node.ext, { count: String(file.fns.length), italic: file.placement === "guess", mark: mark(file), why: t("workbench.side.placedWhy", { how: placementLabel(file.placement, agent), reason: reasonText(file.reason) }) })] : [];
+    }),
+    ...(arrangement.unplaced.length > 0 ? [<TreeFolder key="arr:#unplaced" name={t("workbench.side.notPlaced")} open={unplacedOpen} depth={0} count={arrangement.unplaced.length.toLocaleString()} faint onClick={() => folders.toggle("arr:#unplaced")} />] : []),
+    ...(unplacedOpen ? arrangement.unplaced.slice(0, UNPLACED_SHOWN).map((addr) => (
+      <div key={`arr:fn:${addr}`} onClick={() => openFn(addr, true)} role="treeitem" aria-label={t("workbench.side.functionNamed", { name: nameOf(addr) })} style={{ display: "flex", alignItems: "center", gap: 8, height: 24, flexShrink: 0, paddingLeft: 38, paddingRight: 8, borderRadius: 6, cursor: "pointer", hover: HOVER }}>
+        <Icon name="function" size={12} color={p.link} />
+        <div style={{ flexGrow: 1, minWidth: 0, fontSize: 12, color: p.text3, pointerEvents: "none", ...MONO_STYLE, ...ELLIPSIS }}>{nameOf(addr)}</div>
+      </div>
+    )) : []),
+  ];
 }
 
-/** The files the binary was built from: the paths its compiler left behind, files guessed from its Swift types, or the project as it was arranged. */
-export function SourceFiles(): ReactElement | null {
+function shownArrangement(state: State): Arrangement | null {
+  switch (state.kind) {
+    case "plain":
+    case "failed":
+      return null;
+    case "running":
+      return state.evidence;
+    case "arranged":
+    case "partial":
+      return state.arrangement;
+    default: {
+      const unhandled: never = state;
+      return unhandled;
+    }
+  }
+}
+
+/**
+ * The files the binary was built from, as separate side panel items: the heading, a card, then one per tree row,
+ * so the panel's virtual list builds only the rows in view. A large app has thousands of source files.
+ */
+export function useSourceFileItems(on: boolean): readonly ReactElement[] {
   const bench = useBench();
   const { program, chat } = bench;
-  const types = useLoaded(() => swiftTypes(program.path, program.arch), program.id);
+  const { open } = useSectionOpen("source");
+  const types = useLoaded(() => (on ? swiftTypes(program.path, program.arch) : Promise.resolve(NO_TYPES)), `${program.id}:${on}`);
   const swift = types.kind === "ready" ? types.value : NO_TYPES;
-  const files = useMemo(() => sourceFiles(program.strings.map((row) => row.b), swift), [program, swift]);
+  const files = useMemo(() => (on ? sourceFiles(program.strings.map((row) => row.b), swift) : NO_SOURCES), [on, program, swift]);
   const counts = useMemo(() => {
     const count = (file: string, guessed: boolean): string => {
       const n = traceStatic(file, guessed, swift, program.functions, []).fns.length;
@@ -396,30 +416,32 @@ export function SourceFiles(): ReactElement | null {
     return new Map([...files.paths.map((path) => [path, count(path, false)] as const), ...files.guessed.map((g) => [g.file, count(g.file, true)] as const)]);
   }, [files, program, swift]);
   const { state, start, reset, signIn } = useArrangement(files, swift);
+  const agent = state.kind === "partial" ? state.agent : chat.agents.selected.name;
+  const arranged = shownArrangement(state);
+  const plainRows = usePlainRows(files, counts);
+  const arrangedRows = useArrangedRows(arranged, agent);
   const total = files.paths.length + files.guessed.length;
-  if (total + files.library.length === 0) return null;
-  const agent = chat.agents.selected.name;
-  const shown = state.kind === "arranged" || state.kind === "partial" ? state.arrangement.files.length : total;
-  return (
-    <SideSection id="source" title={t("workbench.side.sourceFiles")} count={shown === 1 ? t("workbench.side.oneFile") : t("workbench.side.files", { count: shown })}>
-      {(() => {
-        switch (state.kind) {
-          case "plain":
-            return <><ArrangeButton onClick={() => start()} /><PlainList files={files} counts={counts} /></>;
-          case "running":
-            return <><Running steps={state.steps} />{state.evidence && <ArrangedTree arrangement={state.evidence} agent={agent} />}</>;
-          case "failed":
-            return <><Failed message={state.message} onRetry={() => start()} /><PlainList files={files} counts={counts} /></>;
-          case "arranged":
-            return <><Done arrangement={state.arrangement} agent={agent} onUndo={reset} onAgain={() => start()} /><ArrangedTree arrangement={state.arrangement} agent={agent} /></>;
-          case "partial":
-            return <><Partial state={state} onRetry={() => start()} onSignIn={signIn} onOther={(x, y) => otherAgents(bench, x, y, start)} onUndo={reset} /><ArrangedTree arrangement={state.arrangement} agent={state.agent} /></>;
-          default: {
-            const unhandled: never = state;
-            return unhandled;
-          }
-        }
-      })()}
-    </SideSection>
-  );
+  if (total + files.library.length === 0) return [];
+  const shown = arranged && state.kind !== "running" ? arranged.files.length : total;
+  const heading = <Heading key="source:heading" id="source" title={t("workbench.side.sourceFiles")} count={shown === 1 ? t("workbench.side.oneFile") : t("workbench.side.files", { count: shown })} />;
+  if (!open) return [heading];
+  const card = ((): ReactElement | null => {
+    switch (state.kind) {
+      case "plain":
+        return <ArrangeButton key="source:card" onClick={() => start()} />;
+      case "running":
+        return <Running key="source:card" steps={state.steps} />;
+      case "failed":
+        return <Failed key="source:card" message={state.message} onRetry={() => start()} />;
+      case "arranged":
+        return <Done key="source:card" arrangement={state.arrangement} agent={agent} onUndo={reset} onAgain={() => start()} />;
+      case "partial":
+        return <Partial key="source:card" state={state} onRetry={() => start()} onSignIn={signIn} onOther={(x, y) => otherAgents(bench, x, y, start)} onUndo={reset} />;
+      default: {
+        const unhandled: never = state;
+        return unhandled;
+      }
+    }
+  })();
+  return [heading, ...(card ? [card] : []), ...(arranged ? arrangedRows : plainRows), <div key="source:end" style={{ height: SECTION_GAP, flexShrink: 0 }} />];
 }
